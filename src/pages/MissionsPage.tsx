@@ -11,27 +11,53 @@ export function MissionsPage() {
 
   useEffect(() => {
     const load = async () => {
-      const { user: u, error } = await getCurrentUser()
-      if (error || !u) return
+      // Загружаем все доступные миссии (видимы все пользователям)
+      const { data: allMissions, error } = await supabase
+        .from('missions')
+        .select('*')
+        .order('created_at', { ascending: true })
 
-      const { data } = await supabase
-        .from('user_missions')
-        .select(`
-          *,
-          missions (*)
-        `)
-        .eq('user_id', u.id)
-        .order('started_at', { ascending: false })
+      if (error) {
+        console.error(error)
+        setLoading(false)
+        return
+      }
 
-      setMissions(data ?? [])
+      // Пытаемся загрузить прогресс пользователя по миссиям
+      const { user: u, error: authError } = await getCurrentUser()
+      if (!authError && u) {
+        const { data: userMissions } = await supabase
+          .from('user_missions')
+          .select('*')
+          .eq('user_id', u.id)
+
+        // Объединяем миссии с прогрессом пользователя
+        const merged = (allMissions ?? []).map((m) => {
+          const userProgress = (userMissions ?? []).find(
+            (um) => um.mission_id === m.id
+          )
+          return {
+            ...m,
+            user_progress: userProgress || null,
+          }
+        })
+        setMissions(merged)
+      } else {
+        setMissions(allMissions ?? [])
+      }
+
       setLoading(false)
     }
 
     void load()
   }, [])
 
-  const activeCount = missions.filter((m) => !m.completed_at).length
-  const completedCount = missions.filter((m) => m.completed_at).length
+  const activeCount = missions.filter(
+    (m) => !m.user_progress?.completed_at
+  ).length
+  const completedCount = missions.filter(
+    (m) => m.user_progress?.completed_at
+  ).length
 
   if (loading) {
     return (
@@ -66,11 +92,23 @@ export function MissionsPage() {
             <TerminalText color="muted">МИССИЙ НЕТ</TerminalText>
           ) : (
             missions.map((m) => (
-              <div key={m.id} className="border-b border-border pb-2 last:border-0">
-                <TerminalText>{m.missions?.title || 'Без названия'}</TerminalText>
+              <div
+                key={m.id}
+                className="border-b border-border pb-2 last:border-0"
+              >
+                <TerminalText>{m.title}</TerminalText>
                 <TerminalText color="muted" className="text-sm">
-                  прогресс {m.progress_days} / {m.missions?.target_days || 0} дней
+                  {m.description} • цель {m.target_days} дней
                 </TerminalText>
+                {m.user_progress ? (
+                  <TerminalText color="muted" className="text-xs mt-1">
+                    прогресс {m.user_progress.progress_days} / {m.target_days} дней
+                  </TerminalText>
+                ) : (
+                  <TerminalText color="muted" className="text-xs mt-1">
+                    ещё не начата
+                  </TerminalText>
+                )}
               </div>
             ))
           )}
